@@ -1,0 +1,329 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+provider "aws" {
+        region     = "ap-south-1"
+        access_key = "AKIATXJQKWUSC2UVMO7G"
+        secret_key = "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"
+}
+variable ingress_web_ports {
+        type = list(number)
+        default = [443,80,22]
+}
+resource "aws_vpc" "vpc" {
+        cidr_block       = "10.0.0.0/16"
+        instance_tenancy = "default"
+        tags = {
+                Environment = "Test"
+                Name = "Demo-VPC"
+        }
+}
+
+resource "aws_internet_gateway" "gw" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        tags = {
+        Environment = "test"
+        Name = "test-igw"
+    }
+}
+
+
+
+resource "aws_route" "internet_access" {
+        route_table_id = "${aws_vpc.vpc.main_route_table_id}"
+        destination_cidr_block = "0.0.0.0/0"
+        gateway_id = "${aws_internet_gateway.gw.id}"
+
+}
+
+resource "aws_eip" "eip" {
+        vpc = true
+        depends_on = ["aws_internet_gateway.gw"]
+
+}
+
+resource "aws_nat_gateway" "nat" {
+        allocation_id = "${aws_eip.eip.id}"
+        subnet_id = "${aws_subnet.public_subnet.id}"
+        depends_on = ["aws_internet_gateway.gw"]
+
+}
+
+resource "aws_subnet" "public_subnet" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        cidr_block = "10.0.0.0/24"
+        map_public_ip_on_launch = true
+        availability_zone = "ap-southeast-1a"
+        tags = {
+                Name = "publicsubnet"
+        }
+}
+
+
+resource "aws_route_table" "public_route_table" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        tags = {
+                Name = "public_route"
+        }
+}
+
+
+resource "aws_route" "public_route" {
+        route_table_id = "${aws_route_table.public_route_table.id}"
+        destination_cidr_block = "0.0.0.0/0"
+        nat_gateway_id = "${aws_internet_gateway.gw.id}"
+}
+
+resource "aws_route_table_association" "public_subnet_association" {
+        subnet_id = "${aws_subnet.public_subnet.id}"
+        route_table_id = "${aws_route_table.public_route_table.id}"
+}
+
+resource "aws_subnet" "private_subnet" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        cidr_block = "10.0.1.0/24"
+        availability_zone = "ap-southeast-1b"
+        tags = {
+                Name = "privatesubnet"
+        }
+}
+
+resource "aws_route_table" "private_route_table" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        tags = {
+                Name = "private_route"
+        }
+}
+
+resource "aws_route" "private_route" {
+        route_table_id = "${aws_route_table.private_route_table.id}"
+        destination_cidr_block = "0.0.0.0/0"
+        nat_gateway_id = "${aws_nat_gateway.nat.id}"
+
+}
+
+resource "aws_route_table_association" "private_subnet_association" {
+        subnet_id = "${aws_subnet.private_subnet.id}"
+        route_table_id = "${aws_route_table.private_route_table.id}"
+
+}
+
+resource "aws_subnet" "private_subnet1" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        cidr_block = "10.0.2.0/24"
+        availability_zone = "ap-southeast-1c"
+        tags = {
+                Name = "privatesubnet1"
+        }
+}
+
+resource "aws_route_table" "private_route_table1" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        tags = {
+                Name = "private_route1"
+        }
+}
+
+resource "aws_route_table_association" "private_subnet_association1" {
+        subnet_id = "${aws_subnet.private_subnet1.id}"
+        route_table_id = "${aws_route_table.private_route_table1.id}"
+}
+
+resource "aws_security_group" "web_sg" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        name = "security-group"
+        description = "Allow SSH and http and https"
+        dynamic ingress {
+                for_each =var.ingress_web_ports
+                iterator = port
+                content{
+                        from_port=port.value
+                        to_port=port.value
+                        protocol    = "tcp"
+                        cidr_blocks = ["0.0.0.0/0"]
+                }
+        }
+
+        egress {
+                from_port   = 0
+                to_port     = 0
+                protocol    = "-1"
+                cidr_blocks = ["0.0.0.0/0"]
+	}
+        tags = {
+                Name = "Web SG"
+        }
+
+}
+resource "aws_security_group" "app_sg" {
+        vpc_id = "${aws_vpc.vpc.id}"
+        name = "security-group"
+        description = "Allow SSH and http and https"
+        ingress {
+                        from_port   =0
+                        to_port     =0
+                        protocol    = "-1"
+                        cidr_blocks = ["10.0.0.0/16"]
+                }
+        
+	egress {
+                from_port   = 0
+                to_port     = 0
+                protocol    = "-1"
+                cidr_blocks = ["10.0.0.0/16"]
+        }
+        tags = {
+                Name = "app SG"
+        }
+}
+
+
+resource "aws_launch_configuration" "conf-web" {
+    name                        = "conf-web"
+    image_id                    = "ami-0bcc094591f354be2"
+    instance_type               = "t2.micro"
+    key_name                    = "test-key"
+    security_groups             = ["${aws_security_group.web_sg.id}"]
+    enable_monitoring           = false
+    ebs_optimized               = false
+    root_block_device {
+        volume_type           = "gp2"
+        volume_size           = 8
+        delete_on_termination = true
+    }
+}
+
+
+resource "aws_launch_configuration" "conf-app" {
+    name                        = "conf-app"
+    image_id                    = "ami-0bcc094591f354be2"
+    instance_type               = "t2.micro"
+    key_name                    = "test-key"
+    security_groups             = ["${aws_security_group.app_sg.id}"]
+    enable_monitoring           = false
+    ebs_optimized               = false
+    root_block_device {
+        volume_type           = "gp2"
+        volume_size           = 8
+        delete_on_termination = true
+    }
+}
+
+resource "aws_lb" "external-alb" {
+  name               = "external-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.web_sg.id]
+  subnets            = [aws_subnet.public_subnet.id]
+}
+
+resource "aws_lb_target_group" "target-alb" {
+  name     = "target-alb"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.vpc.id
+}
+
+resource "aws_lb_listener" "external-listner" {
+  load_balancer_arn = aws_lb.external-alb.arn
+  port              = "80"
+  protocol          = "HTTP"
+default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.target-alb.arn
+  }
+}
+
+resource "aws_autoscaling_group" "asg-web" {
+    desired_capacity          = 1
+    health_check_grace_period = 300
+    health_check_type         = "EC2"
+    launch_configuration      = "${aws_launch_configuration.conf-web.name}"
+    max_size                  = 2
+    min_size                  = 1
+    target_group_arns         = aws_lb_target_group.target-alb.arn
+    name                      = "asg-web"
+    vpc_zone_identifier       = ["${aws_subnet.public_subnet.id}"]
+    tags = [
+      {
+        key   = "Environment"
+        value = "test"
+        propagate_at_launch = true
+      },
+      {
+        key   = "Name"
+        value = "asg-web"
+        propagate_at_launch = true
+       }
+    ]
+}
+
+resource "aws_autoscaling_group" "asg-app" {
+    desired_capacity          = 1
+    health_check_grace_period = 300
+    health_check_type         = "EC2"
+    launch_configuration      = "${aws_launch_configuration.conf-web.name}"
+    max_size                  = 2
+    min_size                  = 1
+    name                      = "asg-app"
+    vpc_zone_identifier       = ["${aws_subnet.private_subnet.id}"]
+    tags = [
+      {
+        key   = "Environment"
+        value = "test"
+        propagate_at_launch = true
+      },
+      {
+        key   = "Name"
+        value = "asg-app"
+        propagate_at_launch = true
+      }
+]
+}
+
+resource "aws_db_subnet_group" "dbsubnet" {
+        name = "main"
+        subnet_ids = ["${aws_subnet.private_subnet1.id}" , "${aws_subnet.private_subnet.id}"]
+        tags = {
+                Name = "My DB subnet group"
+        }
+}
+
+resource "aws_db_instance" "wpdb" {
+        identifier = "wpdb"
+        instance_class = "db.t2.micro"
+        allocated_storage = 20
+        engine = "mysql"
+        name = "wordpress_db"
+        password = "password"
+        username = "userid"
+        engine_version = "5.6.40"
+        skip_final_snapshot = true
+        db_subnet_group_name = "${aws_db_subnet_group.dbsubnet.name}"
+        vpc_security_group_ids = ["${aws_security_group.db.id}"]
+
+lifecycle {
+ignore_changes = ["engine", "auto_minor_version_upgrade", "vpc_security_group_ids"]
+}
+}
+resource "aws_security_group" "db" {
+        name = "db-secgroup"
+        vpc_id = "${aws_vpc.vpc.id}"
+        ingress {
+                from_port = 3306
+                to_port = 3306
+                protocol = "tcp"
+                cidr_blocks = ["0.0.0.0/0"]
+        }
+        egress {
+                from_port = 0
+                to_port = 0
+                protocol = "-1"
+                cidr_blocks = ["0.0.0.0/0"]
+        }
+}

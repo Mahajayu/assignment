@@ -1,0 +1,41 @@
+echo -n "enter 1 for generic list or 2 if you want to provide specific key: "
+read option
+
+if [ $option != 1 ] && [ $option != 2 ]
+then
+        echo -n "choose correct option"
+        exit 1
+fi
+
+TOKEN=`curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"`
+if [ $option == 1 ]
+then
+        echo "inside option 1"
+                curl -s -H "X-aws-ec2-metadata-token: $TOKEN"  http://169.254.169.254/latest/meta-data/ > datatext.txt
+                rm -rf output.txt
+                rm -rf final_output.txt
+                while read -r line; do
+                        meta=${line%/}
+                        Value=`curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/$line`
+                        output=`echo $Value | tr -d '/'`
+			echo  "$meta:$output" >> output.txt
+                done < datatext.txt
+
+                sed -r -i 's/(^[a-zA-Z0-9-]+):(.*)/"\1":"\2",/' output.txt
+                sed -r -i 's/^(.*):(.*) (.*),$/\1:[\2 \3],/' output.txt
+                awk -v OFS='","' '{ $1=$1; print }' output.txt >> final_output.txt
+                sed -i '$s/,$//' final_output.txt
+                #readarray -t ARRAY < final_output.txt; IFS=","; echo "${ARRAY[*]}" >final_output.txt
+                sed -i '1i{' final_output.txt
+                echo "}" >> final_output.txt
+                curl --write-out "\n" -H "X-aws-ec2-metadata-token: $TOKEN" --request GET "http://169.254.169.254/latest/dynamic/instance-identity/document" >> final_output.txt
+                cat final_output.txt
+fi
+
+if [ $option == 2 ]
+then
+        echo -n "enter key to query metadata:"
+        read key
+        keyvalue=`curl -s -H "X-aws-ec2-metadata-token: $TOKEN"  http://169.254.169.254/latest/meta-data/$key/`
+	echo "$key : $keyvalue"
+fi
